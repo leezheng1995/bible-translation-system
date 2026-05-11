@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from app.routers.drive_router import router as drive_router
 from app.routers.ollama_router import router as ollama_router
 
 
@@ -11,6 +12,7 @@ app = FastAPI(
 
 
 app.include_router(ollama_router)
+app.include_router(drive_router)
 
 
 @app.get("/")

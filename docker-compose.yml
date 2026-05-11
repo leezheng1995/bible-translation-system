@@ -13,6 +13,7 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./storage:/app/storage
+      - ./secrets:/app/secrets:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -54,6 +55,7 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./storage:/app/storage
+      - ./secrets:/app/secrets:ro
     depends_on:
       redis:
         condition: service_healthy

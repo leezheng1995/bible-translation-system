@@ -9,3 +9,4 @@ data/
 logs/
 storage/
 .DS_Store
+secrets/
