@@ -1,8 +1,9 @@
-import os
 from typing import Any, Dict, List, Optional
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+
+from app.core.settings import get_settings
 
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
@@ -10,20 +11,14 @@ SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 class GoogleDriveClient:
     def __init__(self) -> None:
-        self.token_path = os.getenv(
-            "GOOGLE_DRIVE_TOKEN_PATH",
-            "/app/secrets/google_drive_token.json",
-        )
+        settings = get_settings()
 
-        self.root_folder_name = os.getenv(
-            "GOOGLE_DRIVE_ROOT_FOLDER_NAME",
-            "Bible Translation",
-        )
-
-        self.inbox_folder_name = os.getenv(
-            "GOOGLE_DRIVE_INBOX_FOLDER_NAME",
-            "01_inbox_ocr",
-        )
+        self.token_path = settings.google_drive_token_path
+        self.root_folder_name = settings.google_drive_root_folder_name
+        self.inbox_folder_name = settings.google_drive_inbox_folder_name
+        self.processing_folder_name = settings.google_drive_processing_folder_name
+        self.archive_folder_name = settings.google_drive_archive_folder_name
+        self.failed_folder_name = settings.google_drive_failed_folder_name
 
         self.service = self._build_service()
 

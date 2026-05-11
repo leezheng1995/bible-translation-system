@@ -1,30 +1,19 @@
 import json
-import os
 import urllib.request
 from typing import Any, Dict, List, Optional
+
+from app.core.settings import get_settings
 
 
 class OllamaClient:
     def __init__(self) -> None:
-        self.base_url = os.getenv(
-            "OLLAMA_BASE_URL",
-            "http://host.docker.internal:11434"
-        ).rstrip("/")
+        settings = get_settings()
 
-        self.translation_model = os.getenv(
-            "OLLAMA_TRANSLATION_MODEL",
-            "qwen3:14b"
-        )
-
-        self.review_model = os.getenv(
-            "OLLAMA_REVIEW_MODEL",
-            "gemma4:26b"
-        )
-
-        self.default_model = os.getenv(
-            "OLLAMA_DEFAULT_MODEL",
-            self.translation_model
-        )
+        self.base_url = settings.ollama_base_url.rstrip("/")
+        self.translation_model = settings.ollama_translation_model
+        self.review_model = settings.ollama_review_model
+        self.default_model = settings.ollama_default_model
+        self.embedding_model = settings.ollama_embedding_model
 
     def get_model_by_type(self, model_type: str) -> str:
         if model_type == "translation":
@@ -32,6 +21,9 @@ class OllamaClient:
 
         if model_type == "review":
             return self.review_model
+
+        if model_type == "embedding":
+            return self.embedding_model
 
         return self.default_model
 
@@ -76,4 +68,31 @@ class OllamaClient:
             "model": selected_model,
             "response": data.get("response", ""),
             "done": data.get("done", False),
+        }
+
+    def embed(
+        self,
+        text: str,
+        model: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        selected_model = model or self.embedding_model
+
+        payload = {
+            "model": selected_model,
+            "input": text,
+        }
+
+        request = urllib.request.Request(
+            f"{self.base_url}/api/embed",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        response = urllib.request.urlopen(request, timeout=60).read().decode()
+        data = json.loads(response)
+
+        return {
+            "model": selected_model,
+            "embeddings": data.get("embeddings", []),
         }

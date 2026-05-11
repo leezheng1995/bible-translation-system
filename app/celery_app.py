@@ -1,19 +1,15 @@
-import os
 from celery import Celery
 
-CELERY_BROKER_URL = os.getenv(
-    "CELERY_BROKER_URL",
-    "redis://redis:6379/0"
-)
+from app.core.settings import get_settings
 
-CELERY_RESULT_BACKEND = os.getenv(
-    "CELERY_RESULT_BACKEND",
-    "redis://redis:6379/1"
-)
+
+settings = get_settings()
 
 celery_app = Celery(
     "bible_translation_worker",
-    broker=CELERY_BROKER_URL,
-    backend=CELERY_RESULT_BACKEND,
+    broker=settings.celery_broker_url,
+    backend=settings.celery_result_backend,
     include=["app.tasks"],
 )
+
+celery_app.conf.broker_connection_retry_on_startup = True
