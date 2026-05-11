@@ -5,26 +5,41 @@ services:
       dockerfile: docker/Dockerfile
     container_name: bible-api
     ports:
-      - "8000:8000"
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/1
-      - DATABASE_URL=sqlite:///./data/bible_translation.db
+      - "${APP_PORT:-8000}:8000"
+    env_file:
+      - .env
     volumes:
       - ./app:/app/app
       - ./data:/app/data
       - ./logs:/app/logs
       - ./storage:/app/storage
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+    networks:
+      - bible-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthcheck').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   redis:
     image: redis:7-alpine
     container_name: bible-redis
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
+    networks:
+      - bible-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
   celery-worker:
     build:
@@ -32,17 +47,22 @@ services:
       dockerfile: docker/Dockerfile
     container_name: bible-celery-worker
     command: celery -A app.celery_app worker --loglevel=info
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/1
-      - DATABASE_URL=sqlite:///./data/bible_translation.db
+    env_file:
+      - .env
     volumes:
       - ./app:/app/app
       - ./data:/app/data
       - ./logs:/app/logs
       - ./storage:/app/storage
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+    networks:
+      - bible-network
 
 volumes:
   redis_data:
+
+networks:
+  bible-network:
+    driver: bridge
