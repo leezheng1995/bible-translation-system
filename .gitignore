@@ -41,3 +41,8 @@ storage/
 .mypy_cache/
 .ruff_cache/
 *.bak.day*
+# Day 23 external tools
+external_tools/
+.openclaw/
+# Node / external tools runtime files
+node_modules/
