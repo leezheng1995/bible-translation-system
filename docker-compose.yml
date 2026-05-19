@@ -13,6 +13,7 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./storage:/app/storage
+      - ./skills:/app/skills:ro
       - ./secrets:/app/secrets:ro
     depends_on:
       redis:
@@ -55,6 +56,7 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./storage:/app/storage
+      - ./skills:/app/skills:ro
       - ./secrets:/app/secrets:ro
     depends_on:
       redis:

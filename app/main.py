@@ -59,3 +59,13 @@ def healthcheck():
     return {
         "status": "ok"
     }
+
+
+# Day 22 - Skill Library router
+try:
+    from app.routers import skill_library
+    app.include_router(skill_library.router)
+except Exception as exc:
+    import logging
+    logging.getLogger(__name__).exception("Failed to include skill_library router: %s", exc)
+
