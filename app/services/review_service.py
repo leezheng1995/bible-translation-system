@@ -1,0 +1,553 @@
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Optional
+
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
+
+from app.models import AuditLog, ErrorLog, Job, Review, Segment, TranslationVersion
+from app.services.ollama_client import OllamaClient, extract_json_object, remove_thinking_text
+
+
+def add_audit_log(
+    db: Session,
+    job_id: Optional[str],
+    event_type: str,
+    stage: str,
+    message: str,
+    payload_json: Optional[str] = None,
+) -> None:
+    db.add(
+        AuditLog(
+            job_id=job_id,
+            event_type=event_type,
+            stage=stage,
+            message=message,
+            payload_json=payload_json,
+        )
+    )
+
+
+def add_error_log(
+    db: Session,
+    job_id: Optional[str],
+    stage: str,
+    error_type: str,
+    error_message: str,
+    traceback: Optional[str] = None,
+) -> None:
+    db.add(
+        ErrorLog(
+            job_id=job_id,
+            stage=stage,
+            error_type=error_type,
+            error_message=error_message,
+            traceback=traceback,
+        )
+    )
+
+
+def get_latest_translation_version(
+    db: Session,
+    segment_id: str,
+) -> Optional[TranslationVersion]:
+    return db.execute(
+        select(TranslationVersion)
+        .where(TranslationVersion.segment_id == segment_id)
+        .order_by(TranslationVersion.version_no.desc())
+        .limit(1)
+    ).scalars().first()
+
+
+def get_review_dir(job_id: str) -> Path:
+    path = Path("/app/storage") / "jobs" / job_id / "reviews"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def build_review_prompt(
+    segment: Segment,
+    version: TranslationVersion,
+) -> str:
+    return f"""You are a Bible translation reviewer.
+
+Review the Chinese translation by three criteria:
+- faithfulness: meaning accuracy and no added interpretation
+- clarity: clear and natural Traditional Chinese
+- literary: solemn and formal Bible style
+
+Source:
+{segment.source_text}
+
+Translation:
+{version.translated_text}
+
+Return ONLY valid compact JSON.
+Do not use markdown.
+Do not explain outside JSON.
+Keep all text brief.
+
+Required JSON:
+{{
+  "segment_id": "{segment.id}",
+  "translation_version_id": "{version.id}",
+  "faithfulness_score": 0,
+  "faithfulness_issues": "brief Traditional Chinese text",
+  "faithfulness_suggestions": "brief Traditional Chinese text",
+  "clarity_score": 0,
+  "clarity_issues": "brief Traditional Chinese text",
+  "clarity_suggestions": "brief Traditional Chinese text",
+  "literary_score": 0,
+  "literary_issues": "brief Traditional Chinese text",
+  "literary_suggestions": "brief Traditional Chinese text",
+  "overall_score": 0,
+  "overall_summary": "brief Traditional Chinese text",
+  "recommended_revision": "Traditional Chinese revised translation"
+}}
+"""
+
+
+def save_review_artifacts(
+    job_id: str,
+    segment_index: int,
+    raw_response: str,
+    cleaned_response: str,
+    parsed_json: Optional[dict[str, Any]],
+) -> dict[str, str]:
+    output_dir = get_review_dir(job_id)
+
+    raw_path = output_dir / f"segment_{segment_index:04d}_review_raw.txt"
+    cleaned_path = output_dir / f"segment_{segment_index:04d}_review_cleaned.txt"
+    json_path = output_dir / f"segment_{segment_index:04d}_review.json"
+
+    raw_path.write_text(raw_response, encoding="utf-8")
+    cleaned_path.write_text(cleaned_response, encoding="utf-8")
+
+    json_payload = parsed_json if parsed_json is not None else {
+        "json_extracted": False,
+        "cleaned_response": cleaned_response,
+    }
+
+    json_path.write_text(
+        json.dumps(json_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    return {
+        "raw_path": str(raw_path),
+        "cleaned_path": str(cleaned_path),
+        "json_path": str(json_path),
+    }
+
+
+def review_to_dict(review: Review) -> dict[str, Any]:
+    return {
+        "id": review.id,
+        "job_id": review.job_id,
+        "segment_id": review.segment_id,
+        "version_id": review.version_id,
+        "model_name": review.model_name,
+        "review_type": review.review_type,
+        "score": review.score,
+        "issues_json": review.issues_json,
+        "suggestions": review.suggestions,
+        "status": review.status,
+        "created_at": review.created_at.isoformat() if review.created_at else None,
+    }
+
+
+def normalize_score(value: Any) -> Optional[float]:
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+
+def build_fallback_review_json(
+    segment: Segment,
+    version: TranslationVersion,
+    cleaned_response: str,
+) -> dict[str, Any]:
+    return {
+        "segment_id": segment.id,
+        "translation_version_id": version.id,
+        "faithfulness_score": 70,
+        "faithfulness_issues": "模型審稿輸出不是合法 JSON，需人工複核原始審稿內容。",
+        "faithfulness_suggestions": "請人工確認譯文是否忠於原文，特別是重要神學詞彙與創世語境。",
+        "clarity_score": 70,
+        "clarity_issues": "模型審稿輸出格式異常，無法自動判斷清晰度細節。",
+        "clarity_suggestions": "請人工確認中文是否自然、清楚，並檢查是否需要調整語序。",
+        "literary_score": 70,
+        "literary_issues": "模型審稿輸出格式異常，無法自動判斷文體細節。",
+        "literary_suggestions": "請人工確認語氣是否莊重、正式，是否符合聖經翻譯風格。",
+        "overall_score": 70,
+        "overall_summary": "Gemma 有產生審稿內容，但未能解析為合法 JSON；系統已建立 fallback 結構化審稿，後續必須由人工審核確認。",
+        "recommended_revision": version.translated_text,
+        "review_json_source": "fallback_unparsed_model_output",
+        "raw_model_output_preview": cleaned_response[:1000],
+    }
+
+
+def create_review_rows(
+    db: Session,
+    job_id: str,
+    segment_id: str,
+    version_id: str,
+    model_name: str,
+    parsed_json: Optional[dict[str, Any]],
+    artifact_paths: dict[str, str],
+) -> list[Review]:
+    rows = []
+
+    if not parsed_json:
+        review = Review(
+            job_id=job_id,
+            segment_id=segment_id,
+            version_id=version_id,
+            model_name=model_name,
+            review_type="raw_review",
+            score=None,
+            issues_json=json.dumps({"json_extracted": False}, ensure_ascii=False),
+            suggestions=json.dumps(artifact_paths, ensure_ascii=False),
+            status="created",
+        )
+        db.add(review)
+        rows.append(review)
+        return rows
+
+    compact_map = {
+        "faithfulness": {
+            "score": parsed_json.get("faithfulness_score"),
+            "issues": parsed_json.get("faithfulness_issues"),
+            "suggestions": parsed_json.get("faithfulness_suggestions"),
+        },
+        "clarity": {
+            "score": parsed_json.get("clarity_score"),
+            "issues": parsed_json.get("clarity_issues"),
+            "suggestions": parsed_json.get("clarity_suggestions"),
+        },
+        "literary": {
+            "score": parsed_json.get("literary_score"),
+            "issues": parsed_json.get("literary_issues"),
+            "suggestions": parsed_json.get("literary_suggestions"),
+        },
+    }
+
+    nested_json_style = any(
+        isinstance(parsed_json.get(key), dict)
+        for key in ["faithfulness", "clarity", "literary"]
+    )
+
+    if nested_json_style:
+        for review_type in ["faithfulness", "clarity", "literary"]:
+            block = parsed_json.get(review_type, {}) or {}
+
+            review = Review(
+                job_id=job_id,
+                segment_id=segment_id,
+                version_id=version_id,
+                model_name=model_name,
+                review_type=review_type,
+                score=normalize_score(block.get("score")),
+                issues_json=json.dumps(block.get("issues", []), ensure_ascii=False),
+                suggestions=json.dumps(block.get("suggestions", []), ensure_ascii=False),
+                status="created",
+            )
+
+            db.add(review)
+            rows.append(review)
+
+        overall = parsed_json.get("overall", {}) or {}
+
+        review = Review(
+            job_id=job_id,
+            segment_id=segment_id,
+            version_id=version_id,
+            model_name=model_name,
+            review_type="overall",
+            score=normalize_score(overall.get("score")),
+            issues_json=json.dumps(
+                {
+                    "summary": overall.get("summary"),
+                    "artifact_paths": artifact_paths,
+                },
+                ensure_ascii=False,
+            ),
+            suggestions=overall.get("recommended_revision"),
+            status="created",
+        )
+
+        db.add(review)
+        rows.append(review)
+
+        return rows
+
+    for review_type, block in compact_map.items():
+        review = Review(
+            job_id=job_id,
+            segment_id=segment_id,
+            version_id=version_id,
+            model_name=model_name,
+            review_type=review_type,
+            score=normalize_score(block.get("score")),
+            issues_json=json.dumps(block.get("issues"), ensure_ascii=False),
+            suggestions=json.dumps(block.get("suggestions"), ensure_ascii=False),
+            status="created",
+        )
+
+        db.add(review)
+        rows.append(review)
+
+    review = Review(
+        job_id=job_id,
+        segment_id=segment_id,
+        version_id=version_id,
+        model_name=model_name,
+        review_type="overall",
+        score=normalize_score(parsed_json.get("overall_score")),
+        issues_json=json.dumps(
+            {
+                "summary": parsed_json.get("overall_summary"),
+                "artifact_paths": artifact_paths,
+            },
+            ensure_ascii=False,
+        ),
+        suggestions=parsed_json.get("recommended_revision"),
+        status="created",
+    )
+
+    db.add(review)
+    rows.append(review)
+
+    return rows
+
+
+def review_segment_sync(
+    db: Session,
+    segment_id: str,
+    force: bool = False,
+    timeout_seconds: int = 1200,
+) -> dict[str, Any]:
+    segment = db.get(Segment, segment_id)
+
+    if not segment:
+        raise ValueError(f"Segment not found: {segment_id}")
+
+    job = db.get(Job, segment.job_id)
+
+    if not job:
+        raise ValueError(f"Job not found: {segment.job_id}")
+
+    version = get_latest_translation_version(db, segment_id)
+
+    if not version:
+        raise ValueError("No translation version found. Please run Day 18 translation first.")
+
+    existing_reviews = db.execute(
+        select(Review).where(
+            Review.segment_id == segment_id,
+            Review.version_id == version.id,
+        )
+    ).scalars().all()
+
+    if existing_reviews and not force:
+        return {
+            "status": "ok",
+            "skipped": True,
+            "message": "Reviews already exist for latest translation version. Use force=true to review again.",
+            "job_id": job.id,
+            "segment_id": segment.id,
+            "version_id": version.id,
+            "reviews": [review_to_dict(item) for item in existing_reviews],
+        }
+
+    if existing_reviews and force:
+        db.execute(
+            delete(Review).where(
+                Review.segment_id == segment_id,
+                Review.version_id == version.id,
+            )
+        )
+        db.flush()
+
+    prompt = build_review_prompt(
+        segment=segment,
+        version=version,
+    )
+
+    job.current_stage = "reviewing"
+    job.updated_at = datetime.utcnow()
+
+    add_audit_log(
+        db=db,
+        job_id=job.id,
+        event_type="review_started",
+        stage="reviewing",
+        message=f"Review started for segment {segment.id}",
+    )
+
+    db.commit()
+
+    client = OllamaClient()
+
+    try:
+        model_result = client.generate_review(
+            prompt=prompt,
+            timeout=timeout_seconds,
+        )
+
+        raw_response = model_result.get("response", "")
+        cleaned_response = remove_thinking_text(raw_response)
+        parsed_json = extract_json_object(raw_response)
+
+        json_source = "model_json"
+
+        if parsed_json is None:
+            parsed_json = build_fallback_review_json(
+                segment=segment,
+                version=version,
+                cleaned_response=cleaned_response,
+            )
+            json_source = "fallback_unparsed_model_output"
+        else:
+            parsed_json["review_json_source"] = json_source
+
+        artifact_paths = save_review_artifacts(
+            job_id=job.id,
+            segment_index=segment.segment_index,
+            raw_response=raw_response,
+            cleaned_response=cleaned_response,
+            parsed_json=parsed_json,
+        )
+
+        rows = create_review_rows(
+            db=db,
+            job_id=job.id,
+            segment_id=segment.id,
+            version_id=version.id,
+            model_name=model_result.get("model"),
+            parsed_json=parsed_json,
+            artifact_paths=artifact_paths,
+        )
+
+        job.current_stage = "reviewed"
+        job.updated_at = datetime.utcnow()
+
+        add_audit_log(
+            db=db,
+            job_id=job.id,
+            event_type="review_completed",
+            stage="reviewed",
+            message=f"Review completed for segment {segment.id}",
+            payload_json=json.dumps(artifact_paths, ensure_ascii=False),
+        )
+
+        db.commit()
+
+        for row in rows:
+            db.refresh(row)
+
+        db.refresh(job)
+
+        return {
+            "status": "ok",
+            "skipped": False,
+            "job_id": job.id,
+            "job_status": job.status,
+            "current_stage": job.current_stage,
+            "segment_id": segment.id,
+            "translation_version_id": version.id,
+            "model": model_result.get("model"),
+            "json_extracted": True,
+            "json_source": json_source,
+            "json": parsed_json,
+            "artifact_paths": artifact_paths,
+            "reviews": [review_to_dict(item) for item in rows],
+            "metrics": {
+                "total_duration": model_result.get("total_duration"),
+                "load_duration": model_result.get("load_duration"),
+                "prompt_eval_count": model_result.get("prompt_eval_count"),
+                "eval_count": model_result.get("eval_count"),
+            },
+        }
+
+    except Exception as exc:
+        job.current_stage = "review_failed"
+        job.error_message = str(exc)
+        job.updated_at = datetime.utcnow()
+
+        add_error_log(
+            db=db,
+            job_id=job.id,
+            stage="review",
+            error_type=exc.__class__.__name__,
+            error_message=str(exc),
+        )
+
+        add_audit_log(
+            db=db,
+            job_id=job.id,
+            event_type="review_failed",
+            stage="review_failed",
+            message=str(exc),
+        )
+
+        db.commit()
+        raise
+
+
+def review_job_sync(
+    db: Session,
+    job_id: str,
+    force: bool = False,
+    timeout_seconds: int = 1200,
+) -> dict[str, Any]:
+    job = db.get(Job, job_id)
+
+    if not job:
+        raise ValueError(f"Job not found: {job_id}")
+
+    segments = db.execute(
+        select(Segment)
+        .where(Segment.job_id == job_id)
+        .order_by(Segment.segment_index.asc())
+    ).scalars().all()
+
+    if not segments:
+        raise ValueError("No segments found. Please run segmentation first.")
+
+    results = []
+
+    for segment in segments:
+        result = review_segment_sync(
+            db=db,
+            segment_id=segment.id,
+            force=force,
+            timeout_seconds=timeout_seconds,
+        )
+        results.append(result)
+
+    job.current_stage = "job_reviewed"
+    job.updated_at = datetime.utcnow()
+
+    add_audit_log(
+        db=db,
+        job_id=job.id,
+        event_type="job_review_completed",
+        stage="job_reviewed",
+        message=f"Job reviewed with {len(results)} segment result(s).",
+    )
+
+    db.commit()
+    db.refresh(job)
+
+    return {
+        "status": "ok",
+        "job_id": job.id,
+        "job_status": job.status,
+        "current_stage": job.current_stage,
+        "count": len(results),
+        "results": results,
+    }

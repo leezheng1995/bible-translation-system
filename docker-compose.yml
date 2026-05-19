@@ -47,7 +47,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile
     container_name: bible-celery-worker
-    command: celery -A app.celery_app worker --loglevel=info
+    command: celery -A app.celery_app worker --loglevel=info --concurrency=1
     env_file:
       - .env
     volumes:

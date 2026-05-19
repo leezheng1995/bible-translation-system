@@ -144,8 +144,8 @@ class OllamaClient:
             prompt=prompt,
             model_type="review",
             temperature=0.1,
-            num_ctx=4096,
-            num_predict=2048,
+            num_ctx=2048,
+            num_predict=1024,
             timeout=timeout,
             format_json=True,
         )

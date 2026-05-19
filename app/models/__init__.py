@@ -1,0 +1,31 @@
+from app.models.tables import (
+    AuditLog,
+    ErrorLog,
+    FileRecord,
+    GlossaryTerm,
+    HumanReview,
+    Job,
+    Memory,
+    Note,
+    Review,
+    Rule,
+    Segment,
+    TranslationVersion,
+    VectorChunk,
+)
+
+__all__ = [
+    "AuditLog",
+    "ErrorLog",
+    "FileRecord",
+    "GlossaryTerm",
+    "HumanReview",
+    "Job",
+    "Memory",
+    "Note",
+    "Review",
+    "Rule",
+    "Segment",
+    "TranslationVersion",
+    "VectorChunk",
+]

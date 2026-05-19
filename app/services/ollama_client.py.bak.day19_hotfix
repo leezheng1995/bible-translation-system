@@ -79,7 +79,6 @@ class OllamaClient:
         num_ctx: int = 4096,
         num_predict: int = 1024,
         timeout: int = 600,
-        format_json: bool = False,
     ) -> dict[str, Any]:
         selected_model = self.select_model(
             model=model,
@@ -97,27 +96,20 @@ class OllamaClient:
             },
         }
 
-        if format_json:
-            payload["format"] = "json"
-
         data = self._post_json(
             path="/api/generate",
             payload=payload,
             timeout=timeout,
         )
 
-        response_text = data.get("response", "")
-
         return {
             "model": selected_model,
-            "response": response_text,
-            "thinking": data.get("thinking"),
+            "response": data.get("response", ""),
             "done": data.get("done", False),
             "total_duration": data.get("total_duration"),
             "load_duration": data.get("load_duration"),
             "prompt_eval_count": data.get("prompt_eval_count"),
             "eval_count": data.get("eval_count"),
-            "raw": data,
         }
 
     def generate_translation(
@@ -132,7 +124,6 @@ class OllamaClient:
             num_ctx=4096,
             num_predict=1024,
             timeout=timeout,
-            format_json=False,
         )
 
     def generate_review(
@@ -145,9 +136,8 @@ class OllamaClient:
             model_type="review",
             temperature=0.1,
             num_ctx=4096,
-            num_predict=2048,
+            num_predict=1024,
             timeout=timeout,
-            format_json=True,
         )
 
 
