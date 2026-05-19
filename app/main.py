@@ -15,6 +15,7 @@ from app.routers.model_router import router as model_router
 from app.routers.translation_router import router as translation_router
 from app.routers.review_router import router as review_router
 from app.routers.human_review_router import router as human_review_router
+from app.routers.memory_router import router as memory_router
 from app.routers.rule_router import router as rule_router
 from app.routers.glossary_router import router as glossary_router
 
@@ -38,6 +39,7 @@ app.include_router(model_router)
 app.include_router(translation_router)
 app.include_router(review_router)
 app.include_router(human_review_router)
+app.include_router(memory_router)
 app.include_router(rule_router)
 app.include_router(glossary_router)
 app.include_router(drive_router)
