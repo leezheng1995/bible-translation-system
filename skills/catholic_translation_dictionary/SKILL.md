@@ -16,6 +16,7 @@ description: 天主教繁體中文翻譯專用字典，供 catholic_translation_
 
 ## Dictionary
 
+God=天主
 Aaron=亞郎
 Abraham=亞巴郎
 Abel=亞伯爾
