@@ -78,3 +78,12 @@ except Exception as exc:
     import logging
     logging.getLogger(__name__).exception("Failed to include claw_skill router: %s", exc)
 
+
+# Day 24 - OpenClaw Task Management router
+try:
+    from app.routers import claw_task_management
+    app.include_router(claw_task_management.router)
+except Exception as exc:
+    import logging
+    logging.getLogger(__name__).exception("Failed to include claw_task_management router: %s", exc)
+
