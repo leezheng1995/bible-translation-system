@@ -87,3 +87,12 @@ except Exception as exc:
     import logging
     logging.getLogger(__name__).exception("Failed to include claw_task_management router: %s", exc)
 
+
+# Day 25 - Memory Review + Rule Conflict Checker router
+try:
+    from app.routers import claw_memory_review
+    app.include_router(claw_memory_review.router)
+except Exception as exc:
+    import logging
+    logging.getLogger(__name__).exception("Failed to include claw_memory_review router: %s", exc)
+
