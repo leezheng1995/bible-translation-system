@@ -69,3 +69,12 @@ except Exception as exc:
     import logging
     logging.getLogger(__name__).exception("Failed to include skill_library router: %s", exc)
 
+
+# Day 22 - 小龍蝦 Skill / OpenClaw router
+try:
+    from app.routers import claw_skill
+    app.include_router(claw_skill.router)
+except Exception as exc:
+    import logging
+    logging.getLogger(__name__).exception("Failed to include claw_skill router: %s", exc)
+
